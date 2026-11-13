@@ -1,7 +1,7 @@
 
-import { createServer } from 'node:http';
-import { execFile } from 'node:child_process';
-import { timingSafeEqual } from 'node:crypto';
+const { createServer } = require('http');
+const { execFile } = require('child_process');
+const { timingSafeEqual } = require('crypto');
 
 const PORT = 3000;
 const TOKEN = process.env.BRIDGE_TOKEN;
@@ -26,7 +26,7 @@ const server = createServer((req, res) => {
   }
 
   const received = Buffer.from(
-    req.headers.authorization ?? ''
+    req.headers.authorization || ''
   );
   const expected = Buffer.from(`Bearer ${TOKEN}`);
 
@@ -77,7 +77,7 @@ const server = createServer((req, res) => {
         reply(200, {
           stdout,
           stderr,
-          exitCode: typeof error?.code === 'number'
+          exitCode: error && typeof error.code === 'number'
             ? error.code
             : error ? 1 : 0,
         });

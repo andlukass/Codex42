@@ -4,15 +4,15 @@ O Codex roda no container `my-codex`. Para executar comandos na máquina host, e
 
 ## Início rápido
 
-No terminal da máquina **host**, execute:
+Instale o projeto no seu diretório `sgoinfre`, em `/sgoinfre/$USER/containers`. No terminal da máquina **host**, execute:
 
 ```bash
-cd /sgoinfre/llopes-d/containers
+cd "/sgoinfre/$USER/containers"
 make
 make codex
 ```
 
-`make` instala Docker e Node.js quando necessário (Debian/Ubuntu com `apt-get`), inicia o serviço Docker, cria `.bridge-token` caso ainda não exista e constrói a imagem `my-codex`. É necessário ter `make` instalado; no Debian/Ubuntu: `sudo apt-get install -y make`. O host precisa de Node.js 18 ou superior e acesso à internet para baixar os pacotes e construir a imagem.
+`make` instala Docker e Node.js quando necessário (Debian/Ubuntu com `apt-get`), inicia o serviço Docker, cria `.bridge-token` caso ainda não exista e constrói a imagem `my-codex`. É necessário ter `make` instalado; no Debian/Ubuntu: `sudo apt-get install -y make`. O bridge no host é compatível com Node.js 12 ou superior; o container do Codex usa Node.js 22. O host precisa de Node.js 12 ou superior e acesso à internet para baixar os pacotes e construir a imagem.
 
 `make codex` também verifica a preparação, inicia o bridge e abre o Codex no terminal atual. Ao sair do Codex, o bridge é encerrado automaticamente. A porta 3000 precisa estar livre; encerre um bridge manual anterior antes de usar esse comando. O primeiro acesso ao Codex pode solicitar login; a autenticação e os dados ficam no volume `codex-data`.
 
@@ -25,16 +25,16 @@ As próximas seções documentam o funcionamento e a execução manual; elas nã
 Entre neste diretório no terminal da máquina host:
 
 ```bash
-cd /sgoinfre/llopes-d/containers
+cd "/sgoinfre/$USER/containers"
 ```
 
-O arquivo do servidor se chama **server.mjs** (não server.msj). É necessário ter Node.js no host e Docker disponível para iniciar o container.
+O arquivo do servidor se chama **server.cjs**. É necessário ter Node.js no host e Docker disponível para iniciar o container.
 
 Na primeira configuração, gere um token aleatório. Este comando substitui qualquer token anterior; use apenas para configurar ou trocar o token:
 
 ```bash
 umask 077
-node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))' > .bridge-token
+node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("hex"))' > .bridge-token
 chmod 600 .bridge-token
 ```
 
@@ -42,7 +42,7 @@ Carregue o token e inicie o servidor:
 
 ```bash
 export BRIDGE_TOKEN="$(cat .bridge-token)"
-node server.mjs
+node server.cjs
 ```
 
 Mantenha esse terminal aberto. O servidor escuta em `127.0.0.1:3000`. Para parar, pressione Ctrl+C.
@@ -54,7 +54,7 @@ O token é uma senha para executar comandos no host: não o inclua em commits, R
 Em outro terminal do host, carregue o mesmo token e execute:
 
 ```bash
-cd /sgoinfre/llopes-d/containers
+cd "/sgoinfre/$USER/containers"
 export BRIDGE_TOKEN="$(cat .bridge-token)"
 
 docker run -it --rm \
@@ -104,7 +104,7 @@ Para testar identidade ou diretório, use `{ command: "whoami" }` ou `{ command:
 
 **Separe o executável dos argumentos.** Use `{ command: "ls", args: ["-l", "/dev"] }`. Enviar `{ command: "ls -l /dev" }` falha porque o servidor usa `execFile`, sem shell. Expansões como `*`, variáveis, pipes e redirecionamentos não são interpretadas automaticamente.
 
-## 4. Como funciona server.mjs
+## 4. Como funciona server.cjs
 
 O servidor:
 
@@ -115,7 +115,7 @@ O servidor:
 5. Executa o programa no host usando `execFile(command, args)`.
 6. Retorna JSON com `stdout`, `stderr` e `exitCode`.
 
-O processo filho herda o ambiente e o diretório de trabalho do bridge. Por isso, `pwd` retorna o diretório em que você iniciou `node server.mjs`.
+O processo filho herda o ambiente e o diretório de trabalho do bridge. Por isso, `pwd` retorna o diretório em que você iniciou `node server.cjs`.
 
 Limites atuais: corpo de requisição de até 4096 caracteres, execução de até 10 segundos e buffer de saída de 1 MiB. Falhas de inicialização do comando ou timeout também podem aparecer como `exitCode: 1`.
 

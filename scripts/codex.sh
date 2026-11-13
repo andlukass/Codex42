@@ -36,14 +36,14 @@ setup)
     command -v docker >/dev/null || packages+=(docker.io)
     command -v node >/dev/null || packages+=(nodejs)
     if ((${#packages[@]})); then
-        command -v apt-get >/dev/null || fail 'Instalação automática disponível para Debian/Ubuntu. Instale Docker e Node.js 18+ e tente novamente.'
+        command -v apt-get >/dev/null || fail 'Instalação automática disponível para Debian/Ubuntu. Instale Docker e Node.js 12+ e tente novamente.'
         admin apt-get update
         admin apt-get install -y "${packages[@]}"
     fi
-    node -e 'if (Number(process.versions.node.split(".")[0]) < 18) process.exit(1)' || fail 'Atualize o Node.js do host para a versão 18 ou superior.'
+    node -e 'if (Number(process.versions.node.split(".")[0]) < 12) process.exit(1)' || fail 'Atualize o Node.js do host para a versão 12 ou superior.'
     docker_command
     if [[ ! -e .bridge-token ]]; then
-        (umask 077; node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))' > .bridge-token)
+        (umask 077; node -e 'process.stdout.write(require("crypto").randomBytes(32).toString("hex"))' > .bridge-token)
     fi
     [[ -s .bridge-token ]] || fail 'O arquivo .bridge-token está vazio; configure um token antes de continuar.'
     chmod 600 .bridge-token
@@ -54,7 +54,7 @@ run)
     docker_command
     export BRIDGE_TOKEN
     BRIDGE_TOKEN=$(cat .bridge-token)
-    node server.mjs &
+    node server.cjs &
     bridge_pid=$!
     cleanup() {
         kill "$bridge_pid" 2>/dev/null || true
@@ -68,13 +68,23 @@ run)
         sleep 0.1
         kill -0 "$bridge_pid" 2>/dev/null || fail 'O bridge não iniciou. Confira se a porta 3000 já está ocupada.'
         if node -e '
-            fetch("http://127.0.0.1:3000/exec", {
+            const body = JSON.stringify({command: process.execPath, args: ["-e", "process.exit(0)"]});
+            const req = require("http").request("http://127.0.0.1:3000/exec", {
                 method: "POST",
-                headers: {"Content-Type": "application/json", Authorization: `Bearer ${process.env.BRIDGE_TOKEN}`},
-                body: JSON.stringify({command: process.execPath, args: ["-e", "process.exit(0)"]}),
-                signal: AbortSignal.timeout(1000)
-            }).then(async r => { if (!r.ok || (await r.json()).exitCode !== 0) process.exit(1); })
-              .catch(() => process.exit(1));
+                headers: {"Content-Type": "application/json", Authorization: `Bearer ${process.env.BRIDGE_TOKEN}`}
+            }, res => {
+                let data = "";
+                res.on("data", chunk => { data += chunk; });
+                res.on("end", () => {
+                    try {
+                        if (res.statusCode !== 200 || JSON.parse(data).exitCode !== 0) process.exit(1);
+                    } catch (_) { process.exit(1); }
+                });
+                res.on("error", () => process.exit(1));
+            });
+            req.setTimeout(1000, () => req.destroy());
+            req.on("error", () => process.exit(1));
+            req.end(body);
         ' 2>/dev/null; then ready=true; break; fi
     done
     [[ $ready == true ]] || fail 'O bridge não respondeu a tempo.'
