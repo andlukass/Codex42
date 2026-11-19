@@ -29,6 +29,23 @@ docker_command() {
     "${DOCKER[@]}" info >/dev/null || fail 'Não foi possível acessar o Docker.'
 }
 
+probe_bridge() {
+    node -e '
+        const { createHmac, randomBytes, timingSafeEqual } = require("crypto");
+        const nonce = randomBytes(32).toString("hex");
+        const expected = Buffer.from(createHmac("sha256", process.env.BRIDGE_TOKEN)
+            .update(`codex-host-bridge-v1:${nonce}`).digest("hex"));
+        // 0: bridge confirmado, 1: porta ocupada, 2: conexão recusada.
+        const req = require("http").get(`http://127.0.0.1:3000/health/${nonce}`, res => {
+            const proof = Buffer.from(res.headers["x-codex-bridge-proof"] || "");
+            process.exit(res.statusCode === 204 && proof.length === expected.length &&
+                timingSafeEqual(proof, expected) ? 0 : 1);
+        });
+        req.on("error", err => process.exit(err.code === "ECONNREFUSED" ? 2 : 1));
+        setTimeout(() => process.exit(1), 1000);
+    '
+}
+
 case "${1:-}" in
 setup)
     [[ $(uname -s) == Linux ]] || fail 'Este fluxo requer Linux (--network host).'
@@ -54,46 +71,58 @@ run)
     docker_command
     export BRIDGE_TOKEN
     BRIDGE_TOKEN=$(cat .bridge-token)
-    node server.cjs &
-    bridge_pid=$!
-    cleanup() {
-        kill "$bridge_pid" 2>/dev/null || true
-        wait "$bridge_pid" 2>/dev/null || true
-    }
-    trap cleanup EXIT
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
-    ready=false
-    for ((attempt=0; attempt<50; attempt++)); do
-        sleep 0.1
-        kill -0 "$bridge_pid" 2>/dev/null || fail 'O bridge não iniciou. Confira se a porta 3000 já está ocupada.'
-        if node -e '
-            const body = JSON.stringify({command: process.execPath, args: ["-e", "process.exit(0)"]});
-            const req = require("http").request("http://127.0.0.1:3000/exec", {
-                method: "POST",
-                headers: {"Content-Type": "application/json", Authorization: `Bearer ${process.env.BRIDGE_TOKEN}`}
-            }, res => {
-                let data = "";
-                res.on("data", chunk => { data += chunk; });
-                res.on("end", () => {
-                    try {
-                        if (res.statusCode !== 200 || JSON.parse(data).exitCode !== 0) process.exit(1);
-                    } catch (_) { process.exit(1); }
-                });
-                res.on("error", () => process.exit(1));
-            });
-            req.setTimeout(1000, () => req.destroy());
-            req.on("error", () => process.exit(1));
-            req.end(body);
-        ' 2>/dev/null; then ready=true; break; fi
-    done
-    [[ $ready == true ]] || fail 'O bridge não respondeu a tempo.'
+    [[ -n $BRIDGE_TOKEN ]] || fail 'O arquivo .bridge-token está vazio.'
+    occupied='A porta 3000 está ocupada por um serviço que não foi identificado como o bridge deste projeto.'
+    if probe_bridge; then
+        printf 'Reutilizando o bridge na porta 3000.\n'
+    else
+        [[ $? == 2 ]] || fail "$occupied"
+        node server.cjs &
+        bridge_pid=$!
+        cleanup() {
+            kill "$bridge_pid" 2>/dev/null || true
+            wait "$bridge_pid" 2>/dev/null || true
+        }
+        trap cleanup EXIT
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        ready=false
+        for ((attempt=0; attempt<50; attempt++)); do
+            sleep 0.1
+            if probe_bridge; then
+                ready=true
+                break
+            else
+                [[ $? == 2 ]] || fail "$occupied"
+            fi
+            kill -0 "$bridge_pid" 2>/dev/null || fail 'O bridge não iniciou.'
+        done
+        [[ $ready == true ]] || fail 'O bridge não respondeu a tempo.'
+    fi
     "${DOCKER[@]}" run -it --rm \
         --network host \
         -v "$PWD:/workspace" \
         -v codex-data:/root/.codex \
         -e BRIDGE_TOKEN="$BRIDGE_TOKEN" \
-        "$CODEX_IMAGE" --sandbox danger-full-access
+        --entrypoint /bin/bash \
+        "$CODEX_IMAGE" /workspace/scripts/codex.sh launch --sandbox danger-full-access
     ;;
-*) fail 'Uso: bash scripts/codex.sh setup|run' ;;
+launch)
+    codex_home=${CODEX_HOME:-"$HOME/.codex"}
+    mkdir -p -- "$codex_home"
+    instructions="$codex_home/AGENTS.md"
+    if [[ -s "$codex_home/AGENTS.override.md" ]]; then
+        instructions="$codex_home/AGENTS.override.md"
+    fi
+    readme_rule='Ao trabalhar neste projeto em /workspace, leia /workspace/README.md, ao lado do Makefile, no início da sessão. Consulte as instruções do bridge antes de executar comandos no host.'
+    exec {instructions_fd}>>"$instructions"
+    flock -x "$instructions_fd"
+    if ! grep -Fxq -- "$readme_rule" "$instructions"; then
+        printf '\n%s\n' "$readme_rule" >&"$instructions_fd"
+    fi
+    exec {instructions_fd}>&-
+    shift
+    exec codex "$@"
+    ;;
+*) fail 'Uso: bash scripts/codex.sh setup|run|launch' ;;
 esac

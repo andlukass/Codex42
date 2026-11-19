@@ -1,7 +1,7 @@
 
 const { createServer } = require('http');
 const { execFile } = require('child_process');
-const { timingSafeEqual } = require('crypto');
+const { createHmac, timingSafeEqual } = require('crypto');
 
 const PORT = 3000;
 const TOKEN = process.env.BRIDGE_TOKEN;
@@ -20,6 +20,15 @@ const server = createServer((req, res) => {
 
     res.end(JSON.stringify(data));
   };
+
+  const health = req.method === 'GET' && /^\/health\/([a-f0-9]{64})$/.exec(req.url);
+  if (health) {
+    const proof = createHmac('sha256', TOKEN)
+      .update(`codex-host-bridge-v1:${health[1]}`)
+      .digest('hex');
+    res.writeHead(204, { 'X-Codex-Bridge-Proof': proof });
+    return res.end();
+  }
 
   if (req.method !== 'POST' || req.url !== '/exec') {
     return reply(404, { error: 'Not found' });

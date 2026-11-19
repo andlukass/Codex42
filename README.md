@@ -14,7 +14,7 @@ make codex
 
 `make` instala Docker e Node.js quando necessário (Debian/Ubuntu com `apt-get`), inicia o serviço Docker, cria `.bridge-token` caso ainda não exista e constrói a imagem `my-codex`. É necessário ter `make` instalado; no Debian/Ubuntu: `sudo apt-get install -y make`. O bridge no host é compatível com Node.js 12 ou superior; o container do Codex usa Node.js 22. O host precisa de Node.js 12 ou superior e acesso à internet para baixar os pacotes e construir a imagem.
 
-`make codex` também verifica a preparação, inicia o bridge e abre o Codex no terminal atual. Ao sair do Codex, o bridge é encerrado automaticamente. A porta 3000 precisa estar livre; encerre um bridge manual anterior antes de usar esse comando. O primeiro acesso ao Codex pode solicitar login; a autenticação e os dados ficam no volume `codex-data`.
+`make codex` verifica a preparação e abre o Codex no terminal atual. Se já houver um bridge na porta 3000 com o mesmo token, ele é reutilizado. Quando a porta está livre, o comando inicia um bridge e o encerra ao sair. Se a porta estiver ocupada por um serviço cuja identidade não puder ser confirmada, o comando retorna um erro. Se você estiver com um bridge de uma versão anterior em execução, reinicie-o para habilitar essa verificação. O primeiro acesso ao Codex pode solicitar login; a autenticação e os dados ficam no volume `codex-data`.
 
 Se o usuário não puder acessar o Docker diretamente, os comandos Docker usam `sudo`. O bridge continua com as permissões do usuário que executou `make codex`; execute o Makefile como seu usuário normal. Sem `sudo` ou acesso a um Docker já instalado, será necessária a intervenção do administrador.
 
@@ -109,7 +109,7 @@ Para testar identidade ou diretório, use `{ command: "whoami" }` ou `{ command:
 O servidor:
 
 1. Lê `BRIDGE_TOKEN` do ambiente e exige que esteja definido.
-2. Aceita apenas `POST /exec`.
+2. Responde a `GET /health/<nonce>` com uma prova HMAC para que o cliente confirme a identidade do bridge sem transmitir o token. A execução de comandos usa `POST /exec`.
 3. Verifica o cabeçalho `Authorization: Bearer <token>` com `timingSafeEqual`, após conferir o tamanho.
 4. Recebe JSON com `command` (string) e `args` (lista de strings, opcional).
 5. Executa o programa no host usando `execFile(command, args)`.
