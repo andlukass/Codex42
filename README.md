@@ -14,7 +14,9 @@ make codex
 
 `make` instala Docker e Node.js quando necessário (Debian/Ubuntu com `apt-get`), inicia o serviço Docker, cria `.bridge-token` caso ainda não exista e constrói a imagem `my-codex`. É necessário ter `make` instalado; no Debian/Ubuntu: `sudo apt-get install -y make`. O bridge no host é compatível com Node.js 12 ou superior; o container do Codex usa Node.js 22. O host precisa de Node.js 12 ou superior e acesso à internet para baixar os pacotes e construir a imagem.
 
-`make codex` verifica a preparação e abre o Codex no terminal atual. Se já houver um bridge na porta 3000 com o mesmo token, ele é reutilizado. Quando a porta está livre, o comando inicia um bridge e o encerra ao sair. Se a porta estiver ocupada por um serviço cuja identidade não puder ser confirmada, o comando retorna um erro. Se você estiver com um bridge de uma versão anterior em execução, reinicie-o para habilitar essa verificação. O primeiro acesso ao Codex pode solicitar login; a autenticação e os dados ficam no volume `codex-data`.
+`make codex` verifica a preparação e abre o Codex no terminal atual. Se já houver um bridge na porta 3000 com o mesmo token, ele é reutilizado. Quando a porta está livre, o comando inicia um bridge e o encerra ao sair. Se a porta estiver ocupada por um serviço cuja identidade não puder ser confirmada, o comando retorna um erro. Se você estiver com um bridge de uma versão anterior em execução, reinicie-o para habilitar essa verificação.
+
+A autenticação e os demais dados do Codex ficam em `/sgoinfre/$USER/.codex-data`, com acesso restrito ao usuário. Na primeira execução com essa pasta ausente, `make codex` copia os dados do volume Docker `codex-data` anterior, se existir. Se a sessão salva tiver expirado, o Codex pode solicitar login novamente.
 
 Se o usuário não puder acessar o Docker diretamente, os comandos Docker usam `sudo`. O bridge continua com as permissões do usuário que executou `make codex`; execute o Makefile como seu usuário normal. Sem `sudo` ou acesso a um Docker já instalado, será necessária a intervenção do administrador.
 
@@ -56,21 +58,23 @@ Em outro terminal do host, carregue o mesmo token e execute:
 ```bash
 cd "/sgoinfre/$USER/containers"
 export BRIDGE_TOKEN="$(cat .bridge-token)"
+CODEX_DATA_DIR="/sgoinfre/$USER/.codex-data"
+install -d -m 700 "$CODEX_DATA_DIR"
 
 docker run -it --rm \
   --network host \
   -v "$PWD:/workspace" \
-  -v codex-data:/root/.codex \
+  --mount "type=bind,source=$CODEX_DATA_DIR,target=/root/.codex" \
   -e BRIDGE_TOKEN="$BRIDGE_TOKEN" \
-  my-codex --sandbox danger-full-access
+  my-codex --sandbox danger-full-access -c 'cli_auth_credentials_store="file"'
 ```
 
 - `--network host`: no Linux desta máquina, permite acessar o bridge pelo endereço `127.0.0.1:3000` de dentro do container.
 - `-v "$PWD:/workspace"`: disponibiliza o diretório atual do host em `/workspace`.
-- `-v codex-data:/root/.codex`: persiste os dados do Codex entre execuções.
+- A montagem de `.codex-data` persiste os dados do Codex no `sgoinfre`. Para copiar os dados de um volume anterior, execute `make codex` antes de criar essa pasta manualmente.
 - `-e BRIDGE_TOKEN=...`: passa o token ao container.
 - `--sandbox danger-full-access`: desativa o sandbox do Codex; não concede root no host.
-- `--rm`: remove o container ao sair; o volume nomeado permanece.
+- `--rm` remove o container ao sair e mantém os dados no `sgoinfre`.
 
 Comandos executados normalmente pelo Codex continuam rodando dentro do container. Para agir no host, o Codex precisa chamar explicitamente o bridge. Você pode pedir: “Use o bridge em http://127.0.0.1:3000/exec com o BRIDGE_TOKEN do ambiente para executar comandos no host”.
 

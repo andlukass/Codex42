@@ -46,6 +46,27 @@ probe_bridge() {
     '
 }
 
+prepare_codex_data() (
+    local destination=$1
+    umask 077
+    if [[ ! -e "$destination" ]]; then
+        local staging
+        staging=$(mktemp -d -- "${destination}.XXXXXX")
+        trap 'rm -rf -- "$staging"' EXIT
+        if "${DOCKER[@]}" volume inspect codex-data >/dev/null 2>&1; then
+            "${DOCKER[@]}" run --rm --network none \
+                --mount type=volume,source=codex-data,target=/previous,readonly \
+                --mount "type=bind,source=$staging,target=/next" \
+                --entrypoint /bin/sh "$CODEX_IMAGE" -ec 'cp -a /previous/. /next/'
+        fi
+        chmod 700 -- "$staging"
+        mv -T -n -- "$staging" "$destination"
+    fi
+    [[ -d "$destination" && ! -L "$destination" ]] ||
+        fail "O caminho dos dados do Codex deve ser um diretório: $destination"
+    chmod 700 -- "$destination"
+)
+
 case "${1:-}" in
 setup)
     [[ $(uname -s) == Linux ]] || fail 'Este fluxo requer Linux (--network host).'
@@ -69,6 +90,8 @@ setup)
     ;;
 run)
     docker_command
+    codex_data_dir="/sgoinfre/$(id -un)/.codex-data"
+    prepare_codex_data "$codex_data_dir"
     export BRIDGE_TOKEN
     BRIDGE_TOKEN=$(cat .bridge-token)
     [[ -n $BRIDGE_TOKEN ]] || fail 'O arquivo .bridge-token está vazio.'
@@ -102,10 +125,11 @@ run)
     "${DOCKER[@]}" run -it --rm \
         --network host \
         -v "$PWD:/workspace" \
-        -v codex-data:/root/.codex \
+        --mount "type=bind,source=$codex_data_dir,target=/root/.codex" \
         -e BRIDGE_TOKEN="$BRIDGE_TOKEN" \
         --entrypoint /bin/bash \
-        "$CODEX_IMAGE" /workspace/scripts/codex.sh launch --sandbox danger-full-access
+        "$CODEX_IMAGE" /workspace/scripts/codex.sh launch --sandbox danger-full-access \
+        -c 'cli_auth_credentials_store="file"'
     ;;
 launch)
     codex_home=${CODEX_HOME:-"$HOME/.codex"}
